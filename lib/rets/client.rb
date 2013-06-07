@@ -31,6 +31,7 @@ module RETS
     def self.login(args)
       raise ArgumentError, "No URL passed" unless args[:url]
 
+      puts "TEST_TEST_TEST_TEST_TEST_TEST_TEST_TEST_TEST_TEST_TEST_TEST"
       urls = {:login => URI.parse(args[:url])}
       raise ArgumentError, "Invalid URL passed" unless urls[:login].is_a?(URI::HTTP)
 
