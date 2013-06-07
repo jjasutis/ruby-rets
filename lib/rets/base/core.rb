@@ -75,6 +75,8 @@ module RETS
         unless @urls[:getmetadata]
           raise RETS::CapabilityNotFound.new("No GetMetadata capability found for given user.")
         end
+        
+        puts "GETTING METADATA!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 
         @request_size, @request_hash, @rets_data = nil, nil, nil
         @http.request(:url => @urls[:getmetadata], :read_timeout => args[:read_timeout], :params => {:Format => :COMPACT, :Type => args[:type], :ID => args[:id]}) do |response|
