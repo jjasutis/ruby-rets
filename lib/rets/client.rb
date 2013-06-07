@@ -30,6 +30,7 @@ module RETS
     # @return [RETS::Base::Core]
     def self.login(args)
       raise ArgumentError, "No URL passed" unless args[:url]
+      puts "CLIENT IS LOGGING IN!!!!!!"
 
       urls = {:login => URI.parse(args[:url])}
       raise ArgumentError, "Invalid URL passed" unless urls[:login].is_a?(URI::HTTP)
