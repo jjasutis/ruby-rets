@@ -75,17 +75,14 @@ module RETS
         unless @urls[:getmetadata]
           raise RETS::CapabilityNotFound.new("No GetMetadata capability found for given user.")
         end
-        
-        puts "GETTING METADATA!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
 
         @request_size, @request_hash, @rets_data = nil, nil, nil
         @http.request(:url => @urls[:getmetadata], :read_timeout => args[:read_timeout], :params => {:Format => :COMPACT, :Type => args[:type], :ID => args[:id]}) do |response|
           if args[:disable_stream]
-            puts "NO STRAMING CALLING STRINGIO!!!!!!!!!!!!"
             stream = StringIO.new(response.body)
           else
-            puts "STREAMING RETS:STREAMHTTP!!!!!!!!!!!!"
             stream = RETS::StreamHTTP.new(response)
+            puts "DONE STREAMING!!!!!!!!!!!!!!"
           end
           sax = RETS::Base::SAXMetadata.new(block)
 
