@@ -81,6 +81,7 @@ module RETS
           if args[:disable_stream]
             stream = StringIO.new(response.body)
           else
+            puts "STREAMING RETS:STREAMHTTP!!!!!!!!!!!!"
             stream = RETS::StreamHTTP.new(response)
           end
           sax = RETS::Base::SAXMetadata.new(block)
