@@ -82,8 +82,9 @@ module RETS
             stream = StringIO.new(response.body)
           else
             stream = RETS::StreamHTTP.new(response)
-            puts "DONE STREAMING!!!!!!!!!!!!!!"
           end
+          
+          puts "DOING SAX STUFF!!!!!!!!!!!!!!!!"
           sax = RETS::Base::SAXMetadata.new(block)
 
           Nokogiri::XML::SAX::Parser.new(sax).parse_io(stream)
