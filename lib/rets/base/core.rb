@@ -81,12 +81,12 @@ module RETS
           if args[:disable_stream]
             stream = StringIO.new(response.body)
           else
-            puts "STREAMING HTTP!!!!"
             stream = RETS::StreamHTTP.new(response)
           end
-          
-          puts "DOING SAX STUFF!!!!!!!!!!!!!!!!"
+
           sax = RETS::Base::SAXMetadata.new(block)
+          
+          puts "SAX_SAX_SAX_SAX = #{sax}"
 
           Nokogiri::XML::SAX::Parser.new(sax).parse_io(stream)
 
