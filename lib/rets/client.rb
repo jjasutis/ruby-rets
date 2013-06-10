@@ -19,7 +19,11 @@ module RETS
     #   * :verify_mode [Integer, Optional] How to verify the SSL certificate when connecting through HTTPS, either OpenSSL::SSL::VERIFY_PEER or OpenSSL::SSL::VERIFY_NONE, defaults to OpenSSL::SSL::VERIFY_NONE
     #   * :ca_file [String, Optional] Path to the CA certification file in PEM format
     #   * :ca_path [String, Optional] Path to the directory containing CA certifications in PEM format
-    # @option args [URI, Optional] :proxy A URI object containing the proxy information to use
+    #   * :proxy [Hash, Optional] Use a HTTP proxy to communicate with the RETS server
+    #   * :proxy :address [String, Optional] Address to connect to the proxy
+    #   * :proxy :port [Integer, Optional] Port to use
+    #   * :proxy :username [String, Optional] Username to authenticate to the proxy with if authentication is required
+    #   * :proxy :password [String, Optional] Password to authenticate to the proxy with if authentication is required
     #
     # @raise [ArgumentError]
     # @raise [RETS::APIError]
@@ -30,7 +34,7 @@ module RETS
     # @return [RETS::Base::Core]
     def self.login(args)
       raise ArgumentError, "No URL passed" unless args[:url]
-      
+
       urls = {:login => URI.parse(args[:url])}
       raise ArgumentError, "Invalid URL passed" unless urls[:login].is_a?(URI::HTTP)
 
