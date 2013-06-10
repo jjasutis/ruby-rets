@@ -146,11 +146,10 @@ module RETS
     # @option args [String] :version RETS Version
     # @option args [String, Optional] :session_id RETS Session ID
     def setup_ua_authorization(args)
-      # Most RETS implementations don't care about RETS-Version for RETS-UA-Authorization.
-      # Because Rapattoni's does, will set and use it when possible, but otherwise will fake one.
-      # They also seem to require RETS-Version even when it's not required by RETS-UA-Authorization.
-      # Others, such as Offut/Innovia pass the header, but without a version attached.
-      @headers["RETS-Version"] = args[:version]
+      # Most RETS implementations don't care about RETS-Version for RETS-UA-Authorization, they don't require RETS-Version in general.
+      # Rapattoni require RETS-Version even without RETS-UA-Authorization, so will try and set the header when possible from the HTTP request rather than implying it.
+      # Interealty requires RETS-Version for RETS-UA-Authorization, so will fake it when we get an 20037 error
+      @headers["RETS-Version"] = args[:version] if args[:version]
 
       if @headers["RETS-Version"] and @config[:useragent] and @config[:useragent][:password]
         login = Digest::MD5.hexdigest("#{@config[:useragent][:name]}:#{@config[:useragent][:password]}")
@@ -181,6 +180,10 @@ module RETS
       end
 
       headers = args[:headers]
+      if args[:disable_compression]
+        headers ||= {}
+        headers["Accept-Encoding"] = "identity"
+      end
 
       # Digest will change every time due to how its setup
       @request_count += 1
@@ -194,12 +197,12 @@ module RETS
 
       headers = headers ? @headers.merge(headers) : @headers
 
-      if @config[:proxy]
-        http = ::Net::HTTP.new(args[:url].host, args[:url].port, @config[:proxy].host, @config[:proxy].port, @config[:proxy].user, @config[:proxy].password)
-      else
+      if !@config[:http][:proxy]
         http = ::Net::HTTP.new(args[:url].host, args[:url].port)
+      else
+        http = ::Net::HTTP.new(args[:url].host, args[:url].port, @config[:http][:proxy][:address], @config[:http][:proxy][:port], @config[:http][:proxy][:username], @config[:http][:proxy][:password])
       end
-      
+
       http.read_timeout = args[:read_timeout] if args[:read_timeout]
       http.set_debug_output(@config[:debug_output]) if @config[:debug_output]
 
@@ -222,6 +225,14 @@ module RETS
             response.header.get_fields("set-cookie").each do |cookie|
               key, value = cookie.split(";").first.split("=")
               key.strip!
+
+              # Sometimes we can get a nil value from raprets
+              unless value
+                cookies_changed = true if @cookie_list[key]
+                @cookie_list.delete(key)
+                next
+              end
+
               value.strip!
 
               # If it's a RETS-Session-ID, it needs to be shoved into the RETS-UA-Authorization field
@@ -242,11 +253,13 @@ module RETS
 
           # Rather than returning HTTP 401 when User-Agent authentication is needed, Retsiq returns HTTP 200
           # with RETS error 20037. If we get a 20037, will let it pass through and handle it as if it was a HTTP 401.
+          # Retsiq apparently returns a 20041 now instead of a 20037 for the same use case.
+          # StratusRETS returns 20052 for an expired season
           rets_code = nil
           if response.code != "401" and ( response.code != "200" or args[:check_response] )
             if response.body =~ /<RETS/i
               rets_code, text = self.get_rets_response(Nokogiri::XML(response.body).xpath("//RETS").first)
-              unless rets_code == "20037" or rets_code == "0"
+              unless rets_code == "20037" or rets_code == "20041" or rets_code == "20052" or rets_code == "0"
                 raise RETS::APIError.new("#{rets_code}: #{text}", rets_code, text)
               end
 
@@ -255,14 +268,21 @@ module RETS
             end
           end
 
+          # Strictly speaking, we do not need to set a RETS-Version in most cases, if RETS-UA-Authorization is not used
+          # It makes more sense to be safe and set it. Innovia at least does not set this until authentication is successful
+          # which is why this check is also here for HTTP 200s and not just 401s
+          if response.code == "200" and !@rets_data[:version] and response.header["rets-version"] != ""
+            @rets_data[:version] = response.header["rets-version"]
+          end
+
           # Digest can become stale requiring us to reload data
-          if @auth_mode == :digest and response.header["www-authenticate"] =~ /stale=\\?"?true/i
+          if @auth_mode == :digest and response.header["www-authenticate"] =~ /stale=true/i
             save_digest(get_digest(response.header.get_fields("www-authenticate")))
 
             args[:block] ||= block
             return self.request(args)
 
-          elsif response.code == "401" or rets_code == "20037"
+          elsif response.code == "401" or rets_code == "20037" or rets_code == "20041" or rets_code == "20052"
             raise RETS::Unauthorized, "Cannot login, check credentials" if ( @auth_mode and @retried_request ) or ( @retried_request and rets_code == "20037" )
             @retried_request = true
 
@@ -295,7 +315,13 @@ module RETS
             # Check if we need to deal with User-Agent authorization
             if response.header["rets-version"] and response.header["rets-version"] != ""
               @rets_data[:version] = response.header["rets-version"]
-            else
+
+            # If we get a 20037 error, it could be due to not having a RETS-Version set
+            # Under Innovia, passing RETS/1.7 will cause some errors
+            # because they don't pass the RETS-Version header until a successful login which is a HTTP 200
+            # They also don't use RETS-UA-Authorization, and it's better to not imply the RETS-Version header
+            # unless necessary, so will only do it for 20037 errors now.
+            elsif !@rets_data[:version] and rets_code == "20037"
               @rets_data[:version] = "RETS/1.7"
             end
 
