@@ -81,6 +81,7 @@ module RETS
           if args[:disable_stream]
             stream = StringIO.new(response.body)
           else
+            puts "STREAMING HTTP!!!!"
             stream = RETS::StreamHTTP.new(response)
           end
           
