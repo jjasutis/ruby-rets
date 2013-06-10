@@ -10,8 +10,6 @@ class RETS::Base::SAXMetadata < Nokogiri::XML::SAX::Document
 
   def start_element(tag, attrs)
     @current_tag = nil
-    puts "START ELEMENT"
-    puts "TAG = #{tag}"
 
     # Figure out if the request is a success
     if tag == "RETS"
