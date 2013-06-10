@@ -2,9 +2,8 @@
 module RETS
   module Base
     class Core
-      
       GET_OBJECT_DATA = ["object-id", "description", "content-id", "content-description", "location", "content-type", "preferred"]
-      
+
       # Can be called after any {RETS::Base::Core} call that hits the RETS Server.
       # @return [String] How big the request was
       attr_reader :request_size
@@ -12,6 +11,10 @@ module RETS
       # Can be called after any {RETS::Base::Core} call that hits the RETS Server.
       # @return [String] SHA1 hash of the request
       attr_reader :request_hash
+
+      # Can be called after any {#get_object} or {#search} call that hits the RETS Server.
+      # @return [Float] How long the request took
+      attr_reader :request_time
 
       # Can be called after any {RETS::Base::Core} call that hits the RETS Server.
       # @return [Hash]
@@ -57,6 +60,7 @@ module RETS
       # @option args [String] :type Metadata to request, the same value if you were manually making the request, "METADATA-SYSTEM", "METADATA-CLASS" and so on
       # @option args [String] :id Filter the data returned by ID, "*" would return all available data
       # @option args [Integer, Optional] :read_timeout How many seconds to wait before giving up
+      # @option args [Boolean, Optional] :disable_stream Disables the streaming setup for data and instead loads it all and then parses
       #
       # @yield For every group of metadata downloaded
       # @yieldparam [String] :type Type of data that was parsed with "METADATA-" stripped out, for "METADATA-SYSTEM" this will be "SYSTEM"
@@ -76,18 +80,26 @@ module RETS
           raise RETS::CapabilityNotFound.new("No GetMetadata capability found for given user.")
         end
 
-        @request_size, @request_hash, @rets_data = nil, nil, nil
-        @http.request(:url => @urls[:getmetadata], :read_timeout => args[:read_timeout], :params => {:Format => :COMPACT, :Type => args[:type], :ID => args[:id]}) do |response|
+        @request_size, @request_hash, @request_time, @rets_data = nil, nil, nil, nil
+
+        start = Time.now.utc.to_f
+        @http.request(:url => @urls[:getmetadata], :read_timeout => args[:read_timeout], :disable_compression => !args[:disable_stream], :params => {:Format => :COMPACT, :Type => args[:type], :ID => args[:id]}) do |response|
           if args[:disable_stream]
             stream = StringIO.new(response.body)
+            @request_time = Time.now.utc.to_f - start
           else
             stream = RETS::StreamHTTP.new(response)
           end
-          sax = RETS::Base::SAXMetadata.new(block)
 
+          sax = RETS::Base::SAXMetadata.new(block)
           Nokogiri::XML::SAX::Parser.new(sax).parse_io(stream)
 
-          @request_size, @request_hash = stream.size, stream.hash
+          if args[:disable_stream]
+            @request_size, @request_hash = response.body.length, Digest::SHA1.hexdigest(response.body)
+          else
+            @request_size, @request_hash = stream.size, stream.hash
+          end
+
           @rets_data = sax.rets_data
         end
 
@@ -136,20 +148,29 @@ module RETS
         end
 
         # Will get swapped to a streaming call rather than a download-and-parse later, easy to do as it's called with a block now
-        @request_size, @request_hash, @rets_data = nil, nil, nil
+        start = Time.now.utc.to_f
+
+        @request_size, @request_hash, @request_time, @rets_data = nil, nil, nil, nil
         @http.request(req) do |response|
           body = response.read_body
+
+          @request_time = Time.now.utc.to_f - start
           @request_size, @request_hash = body.length, Digest::SHA1.hexdigest(body)
 
           # Make sure we aren't erroring
-          if body =~ /(<RETS(.+)\>)/
+          if body =~ /(<RETS (.+)\>)/
+            # RETSIQ (and probably others) return a <RETS> tag on a location request without any error inside
+            # since parsing errors out of full image data calls is a tricky pain. We're going to keep the
+            # loose error checking, but will confirm that it has an actual error code
             code, text = @http.get_rets_response(Nokogiri::XML($1).xpath("//RETS").first)
-            @rets_data = {:code => code, :text => text}
+            unless code == "0"
+              @rets_data = {:code => code, :text => text}
 
-            if code == "20403"
-              return
-            else
-              raise RETS::APIError.new("#{code}: #{text}", code, text)
+              if code == "20403"
+                return
+              else
+                raise RETS::APIError.new("#{code}: #{text}", code, text)
+              end
             end
           end
 
@@ -172,6 +193,14 @@ module RETS
                 next unless value and value != ""
 
                 parsed_headers[name.downcase] = value.strip
+              end
+
+              # Check off the first children because some Rap Rets seems to use RETS-Status
+              # and it will include it with an object while returning actual data.
+              # It only does this for multipart requests, single image pulls will use <RETS> like it should.
+              if parsed_headers["content-type"] == "text/xml"
+                code, text = @http.get_rets_response(Nokogiri::XML(content).children.first)
+                next if code == "20403"
               end
 
               if block.arity == 1
@@ -235,7 +264,7 @@ module RETS
           raise RETS::CapabilityNotFound.new("Cannot find URL for Search call")
         end
 
-        req = {:url => @urls[:search], :read_timeout => args[:read_timeout]}
+        req = {:url => @urls[:search], :read_timeout => args[:read_timeout], :disable_compression => !args[:disable_stream]}
         req[:params] = {:Format => "COMPACT-DECODED", :SearchType => args[:search_type], :QueryType => "DMQL2", :Query => args[:query], :Class => args[:class], :Limit => args[:limit], :Offset => args[:offset], :RestrictedIndicator => args[:restricted]}
         req[:params][:Select] = args[:select].join(",") if args[:select].is_a?(Array)
         req[:params][:StandardNames] = 1 if args[:standard_names]
@@ -246,44 +275,25 @@ module RETS
           req[:params][:Count] = 1
         end
 
-        @request_size, @request_hash, @rets_data = nil, nil, {}
+        @request_size, @request_hash, @request_time, @rets_data = nil, nil, nil, {}
+
+        start = Time.now.utc.to_f
         @http.request(req) do |response|
-          
-          if response.header.key?("content-type") and response.header["content-type"] =~ /.*charset=(.*)/i
-            header_encoding = $1.to_s.upcase
+          if args[:disable_stream]
+            stream = StringIO.new(response.body)
+            @request_time = Time.now.utc.to_f - start
+          else
+            stream = RETS::StreamHTTP.new(response)
           end
-          
-          stream = StringIO.new(response.body)
-          reader = Nokogiri::XML::Reader(stream, nil, header_encoding)
-          while reader.read
-            if reader.node_type == Nokogiri::XML::Reader::TYPE_ELEMENT
-              # Figure out if the request is a success
-              case reader.name
-              when "RETS"
-                @rets_data[:code], @rets_data[:text] = reader.attribute('ReplyCode'), reader.attribute('ReplyText')
-                if @rets_data[:code] != "0" and @rets_data[:code] != "20201"
-                  raise RETS::APIError.new("#{@rets_data[:code]}: #{@rets_data[:text]}", @rets_data[:code], @rets_data[:text])
-                end
-              when "DELIMITER"
-                @rets_data[:delimiter] = reader.attribute('value').to_i.chr
-              when "COUNT"
-                @rets_data[:count] = reader.attribute('Records').to_i
-              when "COLUMNS"
-                columns = reader.inner_xml.split(@rets_data[:delimiter])
-              when "DATA"
-                if !reader.inner_xml.nil?
-                  data = {}
-                  list = reader.inner_xml.split(@rets_data[:delimiter])
-                  list.each_index do |index|
-                    next if columns[index].nil? or columns[index] == ""
-                    data[columns[index]] = list[index]
-                  end
-                  block.call(data)
-                end
-              end
-            end
+
+          sax = RETS::Base::SAXSearch.new(@rets_data, block)
+          Nokogiri::XML::SAX::Parser.new(sax).parse_io(stream)
+
+          if args[:disable_stream]
+            @request_size, @request_hash = response.body.length, Digest::SHA1.hexdigest(response.body)
+          else
+            @request_size, @request_hash = stream.size, stream.hash
           end
-          @request_size, @request_hash = response.body.length, Digest::SHA1.hexdigest(response.body)
         end
 
         nil
