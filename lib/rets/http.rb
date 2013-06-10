@@ -146,11 +146,10 @@ module RETS
     # @option args [String] :version RETS Version
     # @option args [String, Optional] :session_id RETS Session ID
     def setup_ua_authorization(args)
-      # Most RETS implementations don't care about RETS-Version for RETS-UA-Authorization.
-      # Because Rapattoni's does, will set and use it when possible, but otherwise will fake one.
-      # They also seem to require RETS-Version even when it's not required by RETS-UA-Authorization.
-      # Others, such as Offut/Innovia pass the header, but without a version attached.
-      @headers["RETS-Version"] = args[:version]
+      # Most RETS implementations don't care about RETS-Version for RETS-UA-Authorization, they don't require RETS-Version in general.
+      # Rapattoni require RETS-Version even without RETS-UA-Authorization, so will try and set the header when possible from the HTTP request rather than implying it.
+      # Interealty requires RETS-Version for RETS-UA-Authorization, so will fake it when we get an 20037 error
+      @headers["RETS-Version"] = args[:version] if args[:version]
 
       if @headers["RETS-Version"] and @config[:useragent] and @config[:useragent][:password]
         login = Digest::MD5.hexdigest("#{@config[:useragent][:name]}:#{@config[:useragent][:password]}")
