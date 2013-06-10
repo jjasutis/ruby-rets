@@ -90,7 +90,7 @@ module RETS
 
           Nokogiri::XML::SAX::Parser.new(sax).parse_io(stream)
           
-          puts "NOKOGIRI FAILED HERE!!!!!"
+          puts "METDATA = #{sax.rets_data}"
 
           @request_size, @request_hash = stream.size, stream.hash
           @rets_data = sax.rets_data
