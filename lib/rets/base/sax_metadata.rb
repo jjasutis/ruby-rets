@@ -1,3 +1,4 @@
+# SAX parser for the GetMetadata call.
 class RETS::Base::SAXMetadata < Nokogiri::XML::SAX::Document
   attr_accessor :rets_data
 
